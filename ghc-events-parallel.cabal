@@ -1,5 +1,5 @@
 name:             ghc-events-parallel
-version:          0.4.3.0
+version:          0.5.0.0
 synopsis:         Library and tool for parsing .eventlog files from parallel GHC
 description:      Parses .eventlog files emitted by parallel GHC versions 
                   (6.12.3 and later). This package can replace the original 

@@ -339,30 +339,6 @@ ghc7Parsers = [
       return RunThread{thread=t}
    )),
 
- (FixedSizeParser EVENT_STOP_THREAD (sz_tid + sz_th_stop_status) (do
-      -- (thread, status)
-      t <- getE
-      s <- getE :: GetEvents RawThreadStopStatus
-      return StopThread{thread=t, status = if s > maxThreadStopStatus
-                                              then NoStatus
-                                              else mkStopStatus s}
-   )),
-
- (FixedSizeParser EVENT_STOP_THREAD (sz_tid + sz_th_stop_status + sz_tid) (do
-      -- (thread, status, info)
-      t <- getE
-      s <- getE :: GetEvents RawThreadStopStatus
-      i <- getE :: GetEvents ThreadId
-      return StopThread{thread = t,
-                        status = case () of
-                                  _ | s > maxThreadStopStatus
-                                    -> NoStatus
-                                    | s == 8 {- XXX yeuch -}
-                                    -> BlockedOnBlackHoleOwnedBy i
-                                    | otherwise
-                                    -> mkStopStatus s}
-   )),
-
  (FixedSizeParser EVENT_THREAD_RUNNABLE sz_tid (do  -- (thread)
       t <- getE
       return ThreadRunnable{thread=t}
@@ -445,6 +421,57 @@ ghc7Parsers = [
    ))
  ]
 
+-- special thread stop event parsers for GHC-7 before version 7.7.
+-- see [Stop status since GHC-7.7] in EventTypes.hs
+pre77StopParsers :: [EventParser EventInfo]
+pre77StopParsers = [
+ (FixedSizeParser EVENT_STOP_THREAD (sz_tid + sz_th_stop_status) (do
+      -- (thread, status)
+      t <- getE
+      s <- getE :: GetEvents RawThreadStopStatus
+      return StopThread{thread=t, status = if s > maxThreadStopStatus_pre77
+                                              then NoStatus
+                                              else mkStopStatus_pre77 s}
+                        -- older version of the event, no block info
+   )),
+
+ (FixedSizeParser EVENT_STOP_THREAD (sz_tid + sz_th_stop_status + sz_tid) 
+    (do
+      -- (thread, status, info)
+      t <- getE
+      s <- getE :: GetEvents RawThreadStopStatus
+      i <- getE :: GetEvents ThreadId
+      return StopThread{thread = t,
+                        status = case () of
+                                  _ | s > maxThreadStopStatus_pre77
+                                    -> NoStatus
+                                    | s == 8 {- XXX yeuch -}
+                                      -- pre-7.7: 8==BlockedOnBlackhole
+                                    -> BlockedOnBlackHoleOwnedBy i
+                                    | otherwise
+                                    -> mkStopStatus_pre77 s}
+    ))
+  ]
+
+-- see [Stop status since GHC-7.7] in EventTypes.hs
+post77StopParser :: EventParser EventInfo
+post77StopParser =
+ (FixedSizeParser EVENT_STOP_THREAD (sz_tid + sz_th_stop_status + sz_tid) (do
+      -- (thread, status, info)
+      t <- getE
+      s <- getE :: GetEvents RawThreadStopStatus
+      i <- getE :: GetEvents ThreadId
+      return StopThread{thread = t,
+                        status = case () of
+                                  _ | s > maxThreadStopStatus
+                                    -> NoStatus
+                                    | s == 9 {- XXX yeuch -}
+                                      -- GHC post-7.7: 9 == BlockedOnBlackHole
+                                    -> BlockedOnBlackHoleOwnedBy i
+                                    | otherwise
+                                    -> mkStopStatus s}
+   ))
+
  -----------------------
  -- GHC 6.12 compat: GHC 6.12 reported the wrong sizes for some events,
  -- so we have to recognise those wrong sizes here for backwards
@@ -470,11 +497,13 @@ ghc6Parsers = [
 
  (FixedSizeParser EVENT_STOP_THREAD (sz_old_tid + 2) (do  -- (thread, status)
       t <- getE
-      s <- getE :: GetEvents Word16
-      let stat = fromIntegral s
-      return StopThread{thread=t, status = if stat > maxBound
+      s <- getE :: GetEvents RawThreadStopStatus
+      return StopThread{thread=t, status = if s > maxThreadStopStatus_pre77
                                               then NoStatus
-                                              else mkStopStatus stat}
+                                              else mkStopStatus_pre77 s}
+                        -- older version of the event, use pre-77 encoding
+                        -- (actually, it uses only encodings 0 to 5)
+                        -- see [Stop status since GHC-7.7] in EventTypes.hs
    )),
 
  (FixedSizeParser EVENT_THREAD_RUNNABLE sz_old_tid (do  -- (thread)
@@ -736,10 +765,24 @@ getEventLog = do
         -- are standard events, and can be used by other runtime systems that
         -- make use of threadscope.
         -}
+
+        -- GHC-7.7 changed the thread block status encoding, and
+        -- therefore requires a different parser for the stop event.
+        -- (This fix assumes things will remain as they are in GHC).
+        -- User markers were added in GHC-7.8 so we simply use
+        -- different parsers if the user marker event is present.
+        -- This fix breaks software which uses ghc-events and combines
+        -- user markers with the older stop status encoding. We don't
+        -- know of any such software, though.
+        is_pre77 = Nothing == M.lookup EVENT_USER_MARKER imap
+        stopParsers = if is_pre77 then pre77StopParsers
+                                  else [post77StopParser]
+
         event_parsers = if is_ghc_6
                             then standardParsers ++ ghc6Parsers ++
                                 parRTSParsers sz_old_tid
                             else standardParsers ++ ghc7Parsers
+                                 ++ stopParsers
                                  ++ parRTSParsers sz_tid
                                  ++ mercuryParsers ++ perfParsers
         parsers = mkEventTypeParsers imap event_parsers
@@ -1012,6 +1055,7 @@ showThreadStopStatus ThreadBlocked  = "thread blocked"
 showThreadStopStatus ThreadFinished = "thread finished"
 showThreadStopStatus ForeignCall    = "making a foreign call"
 showThreadStopStatus BlockedOnMVar  = "blocked on an MVar"
+showThreadStopStatus BlockedOnMVarRead = "blocked reading an MVar"
 showThreadStopStatus BlockedOnBlackHole = "blocked on a black hole"
 showThreadStopStatus BlockedOnRead = "blocked on I/O read"
 showThreadStopStatus BlockedOnWrite = "blocked on I/O write"
@@ -1221,6 +1265,11 @@ putEventSpec (RunThread t) = do
 
 -- here we assume that ThreadStopStatus fromEnum matches the definitions in
 -- EventLogFormat.h
+
+-- The function uses the new (post GHC-7.7) encoding. This is wrong
+-- when writing a log produced by a GHC pre-7.7, as its version event
+-- is included, yet this is probably tolerable.
+-- For the whole story see [Stop status since GHC-7.7] in EventTypes.hs
 putEventSpec (StopThread t s) = do
     putE t
     putE $ case s of
@@ -1232,18 +1281,19 @@ putEventSpec (StopThread t s) = do
             ThreadFinished -> 5
             ForeignCall -> 6
             BlockedOnMVar -> 7
-            BlockedOnBlackHole -> 8
-            BlockedOnBlackHoleOwnedBy _ -> 8
-            BlockedOnRead -> 9
-            BlockedOnWrite -> 10
-            BlockedOnDelay -> 11
-            BlockedOnSTM -> 12
-            BlockedOnDoProc -> 13
-            BlockedOnCCall -> 14
-            BlockedOnCCall_NoUnblockExc -> 15
-            BlockedOnMsgThrowTo -> 16
-            ThreadMigrating -> 17
-            BlockedOnMsgGlobalise -> 18
+            BlockedOnMVarRead -> 8 -- since GHC-7.7
+            BlockedOnBlackHole -> 9
+            BlockedOnBlackHoleOwnedBy _ -> 9
+            BlockedOnRead -> 10
+            BlockedOnWrite -> 11
+            BlockedOnDelay -> 12
+            BlockedOnSTM -> 13
+            BlockedOnDoProc -> 14
+            BlockedOnCCall -> 15
+            BlockedOnCCall_NoUnblockExc -> 16
+            BlockedOnMsgThrowTo -> 17
+            ThreadMigrating -> 18
+            BlockedOnMsgGlobalise -> 19
     putE $ case s of
             BlockedOnBlackHoleOwnedBy i -> i
             _                           -> 0

@@ -3,16 +3,16 @@
  * (c) The GHC Team, 2008-2012
  *
  * Event log format
- *
+ * 
  * The log format is designed to be extensible: old tools should be
  * able to parse (but not necessarily understand all of) new versions
  * of the format, and new tools will be able to understand old log
  * files.
- *
+ * 
  * Each event has a specific format.  If you add new events, give them
  * new numbers: we never re-use old event numbers.
  *
- * - The format is endian-independent: all values are represented in
+ * - The format is endian-independent: all values are represented in 
  *    bigendian order.
  *
  * - The format is extensible:
@@ -51,7 +51,7 @@
  *       Word8*         -- extra info (for future extensions)
  *       EVENT_ET_END
  *
- * Event :
+ * Event : 
  *       Word16         -- event_type
  *       Word64         -- time (nanosecs)
  *       [Word16]       -- length of the rest (for variable-sized events only)
@@ -251,7 +251,7 @@
 /*
  * Status values for EVENT_STOP_THREAD
  *
- * 1-5 are the StgRun return values (from includes/Constants.h):
+ * 1-5 are the StgRun return values (from includes/rts/Constants.h):
  *
  * #define HeapOverflow   1
  * #define StackOverflow  2
@@ -260,15 +260,23 @@
  * #define ThreadFinished 5
  * #define ForeignCall                  6
  * #define BlockedOnMVar                7
- * #define BlockedOnBlackHole           8
- * #define BlockedOnRead                9
- * #define BlockedOnWrite               10
- * #define BlockedOnDelay               11
- * #define BlockedOnSTM                 12
- * #define BlockedOnDoProc              13
+ * #define BlockedOnMVarRead            8
+ * NOTE: added in GHC-7.7, earlier versions shift numbers one up
+ * #define BlockedOnBlackHole           9
+ * #define BlockedOnRead                10
+ * #define BlockedOnWrite               11
+ * #define BlockedOnDelay               12
+ * #define BlockedOnSTM                 13
+ * #define BlockedOnDoProc              14
+ * NOTE: unused GUM states 9, 10 (here: 15,16) in rts/Constants.h
  * #define BlockedOnCCall               -- not used (see ForeignCall)
  * #define BlockedOnCCall_NoUnblockExc  -- not used (see ForeignCall)
- * #define BlockedOnMsgThrowTo          16
+ * #define BlockedOnMsgThrowTo          17
+ * NOTE: 17 because unused GUM states are ignored in ghc-events lib
+ *       Otherwise it would be 19, following would be 20, 21
+ * #define ThreadMigrating              18
+ * #define BlockedOnMsgGlobalise        19
+ * NOTE: not present in GHC. Mercury-Event?
  */
 #define THREAD_SUSPENDED_FOREIGN_CALL 6
 
@@ -289,6 +297,8 @@ typedef StgWord16 EventPayloadSize; /* variable-size events */
 typedef StgWord16 EventThreadStatus; /* status for EVENT_STOP_THREAD */
 typedef StgWord32 EventCapsetID;
 typedef StgWord16 EventCapsetType;   /* types for EVENT_CAPSET_CREATE */
+typedef StgWord64 EventTaskId;         /* for EVENT_TASK_* */
+typedef StgWord64 EventKernelThreadId; /* for EVENT_TASK_CREATE */
 
 typedef StgWord32 EventProcessID;
 typedef StgWord16 EventMachineID;

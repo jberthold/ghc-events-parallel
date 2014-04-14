@@ -369,6 +369,19 @@ data EventInfo
 
   deriving Show
 
+{- [Note: Stop status since GHC-7.7]
+
+In GHC-7.7, a new thread block reason "BlockedOnMVarRead" was
+introduced, and placed adjacent to BlockedOnMVar (7). Therefore, event
+logs produced by GHC pre-7.7 encode BlockedOnBlackHole and following
+as 8..18, whereas post-7.7 event logs encode them as 9..19.
+
+The parsers in Events.hs have to be adapted accordingly, providing
+either post77 or pre77 parsers for the thread-stop event.
+The EVENT_USER_MARKER was not present in GHC-7.6.3, so we take its
+absense as an indication that pre77 parsers should be used.
+ -}
+
 --sync with ghc/includes/Constants.h
 data ThreadStopStatus
  = NoStatus
@@ -379,6 +392,7 @@ data ThreadStopStatus
  | ThreadFinished
  | ForeignCall
  | BlockedOnMVar
+ | BlockedOnMVarRead   -- since GHC-7.8, see [Stop status since GHC-7.7]
  | BlockedOnBlackHole
  | BlockedOnRead
  | BlockedOnWrite
@@ -393,8 +407,9 @@ data ThreadStopStatus
  | BlockedOnBlackHoleOwnedBy {-# UNPACK #-}!ThreadId
  deriving (Show)
 
-mkStopStatus :: RawThreadStopStatus -> ThreadStopStatus
-mkStopStatus n = case n of
+-- GHC pre-7.7 encoding, see [Stop status since GHC-7.7]
+mkStopStatus_pre77 :: RawThreadStopStatus -> ThreadStopStatus
+mkStopStatus_pre77 n = case n of
  0  ->  NoStatus
  1  ->  HeapOverflow
  2  ->  StackOverflow
@@ -416,8 +431,34 @@ mkStopStatus n = case n of
  18 ->  BlockedOnMsgGlobalise
  _  ->  error "mkStat"
 
-maxThreadStopStatus :: RawThreadStopStatus
-maxThreadStopStatus = 18
+-- GHC post-7.7 encoding, see [Stop status since GHC-7.7]
+mkStopStatus :: RawThreadStopStatus -> ThreadStopStatus
+mkStopStatus n = case n of
+ 0  ->  NoStatus
+ 1  ->  HeapOverflow
+ 2  ->  StackOverflow
+ 3  ->  ThreadYielding
+ 4  ->  ThreadBlocked
+ 5  ->  ThreadFinished
+ 6  ->  ForeignCall
+ 7  ->  BlockedOnMVar
+ 8  ->  BlockedOnMVarRead -- since GHC-7.8
+ 9  ->  BlockedOnBlackHole
+ 10 ->  BlockedOnRead
+ 11 ->  BlockedOnWrite
+ 12 ->  BlockedOnDelay
+ 13 ->  BlockedOnSTM
+ 14 ->  BlockedOnDoProc
+ 15 ->  BlockedOnCCall
+ 16 ->  BlockedOnCCall_NoUnblockExc
+ 17 ->  BlockedOnMsgThrowTo
+ 18 ->  ThreadMigrating
+ 19 ->  BlockedOnMsgGlobalise
+ _  ->  error "mkStat"
+
+maxThreadStopStatus_pre77, maxThreadStopStatus :: RawThreadStopStatus
+maxThreadStopStatus_pre77  = 18 -- see [Stop status since GHC-7.7]
+maxThreadStopStatus = 19
 
 data CapsetType
  = CapsetCustom
