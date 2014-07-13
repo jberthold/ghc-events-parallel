@@ -1,5 +1,5 @@
 name:             ghc-events-parallel
-version:          0.4.3.1
+version:          0.5.0.1
 synopsis:         Library and tool for parsing .eventlog files from parallel GHC
 description:      Parses .eventlog files emitted by parallel GHC versions 
                   (6.12.3 and later). This package can replace the original 
@@ -34,7 +34,7 @@ source-repository head
 
 library
   build-depends:    base       == 4.*,
-                    mtl        >= 1.1 && < 3.0,
+                    transformers >= 0.3 && < 0.6,
                     containers >= 0.2 && < 0.6,
                     binary     >= 0.5 && < 0.8,
                     bytestring >= 0.9.0,
@@ -52,11 +52,11 @@ library
 
 executable ghc-events
   main-is:          GhcEvents.hs
-  build-depends:    base, mtl, containers, binary, bytestring, array
+  build-depends:    base, transformers, containers, binary, bytestring, array
   extensions:	    RecordWildCards, NamedFieldPuns, BangPatterns, PatternGuards
 
 test-suite test-versions
   type:             exitcode-stdio-1.0
   main-is:          test/TestVersions.hs
-  build-depends:    base, mtl, containers, binary, bytestring, array
+  build-depends:    base, transformers, containers, binary, bytestring, array
   extensions:	    RecordWildCards, NamedFieldPuns, BangPatterns, PatternGuards
